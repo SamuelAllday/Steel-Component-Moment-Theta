@@ -14,7 +14,7 @@ MATLAB + OpenSees pipeline to generate a moment–rotation (M–θ) backbone for
 ## Key scripts
 - `Steel_Component_Moment_Theta.m` – driver / orchestrator
 - `read_input_params.m` – geometry, springs, analysis settings
-- `pre_calc.m` – derived geometry (lever arm etc.)
+- `pre_calc.m` – derived geometry
 - `build_tcl.m` – assembles .tcl model for each load case
   - `write_nodes.m`
   - `write_materials.m`
