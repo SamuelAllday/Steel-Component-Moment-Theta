@@ -1,104 +1,78 @@
 function [springCurves, Mhist] = read_local_springs(workDir, modelData)
-% read_local_springs
-% Reads per-spring deformation histories and the global moment history.
-%
-% OUTPUT:
-%   springCurves(r).label
-%   springCurves(r).segment(j).delta   [nSteps x 1] axial deformation history (mm)
-%
-%   springCurves(1)  -> compression row (bottom block)
-%   springCurves(2+) -> tension rows
-%
-%   Mhist [nSteps x 1] global joint moment history in Nmm
-%         computed as tip shear * span
-%
-% NOTE:
-%   Compression row springs shorten under compression. We flip the sign so
-%   compression is plotted as a positive "closing" extension.
+% Reads per-step spring deformations and beam moment history
+% without relying on modelData.compSegNames.
 
-    resultsDir = fullfile(workDir, modelData.resultsDirName);
+    res = fullfile(workDir, modelData.resultsDirName);
 
-    springCurves = struct;
-
-    % --------------------------------------------------
-    % Compression / shear chain (index 1)
-    % --------------------------------------------------
-    mc = numel(modelData.Kc);
-    springCurves(1).label = 'compression_row';
-    for i = 1:mc
-        dfile = fullfile(resultsDir, sprintf('crow_%02d_defo.txt',  i));
-
-        Di = [];
-        if isfile(dfile)
-            Di = readmatrix(dfile,'FileType','text'); % [nSteps x ?]
-        end
-
-        % zeroLength "deformation" gives relative DOF deformation:
-        % [ux uy rz ...] at i-end rel. to j-end
-        % We want axial deformation along DOF 1 => column 1
-        if ~isempty(Di)
-            axialDefo = Di(:,1); % mm
+    % --- Moment history from beam element 900 ---
+    fBeam = fullfile(res,'beam900_force_local_hist.txt');
+    if isfile(fBeam)
+        B = readmatrix(fBeam,'FileType','text');    % [Ni Vi Mi Nj Vj Mj] per step
+        if ~isempty(B) && size(B,2) >= 3
+            Mhist = B(:,3);                         % Mi at node 30 (Nmm)
         else
-            axialDefo = [];
+            Mhist = [];
         end
-
-        % Flip sign so compression closure shows as positive extension
-        axialDefo_plot = -axialDefo;
-
-        springCurves(1).segment(i).delta = axialDefo_plot;
+    else
+        Mhist = [];
     end
 
-    % --------------------------------------------------
-    % Tension rows (index 2..end)
-    % --------------------------------------------------
+    % --- Determine number of compression segments (CWC–CWS–BFC) ---
+    if isfield(modelData,'Kc')
+        Nc = numel(modelData.Kc);
+    elseif isfield(modelData,'comp_K')
+        Nc = numel(modelData.comp_K);
+    else
+        Nc = 0;
+    end
+
+    % --- Prepare output containers ---
     nrows = numel(modelData.Kt);
-    for r = 1:nrows
-        springCurves(r+1).label = sprintf('tension_row_%d', r);
+    outCount = nrows + (Nc > 0);
+    springCurves = repmat(struct('label','','segment',[]), outCount, 1);
 
-        C = numel(modelData.Kt{r});
-        for j = 1:C
-            dfile = fullfile(resultsDir, sprintf('trow_%02d_%02d_defo.txt',  r, j));
+    idx = 0;
 
-            Di = [];
-            if isfile(dfile)
-                Di = readmatrix(dfile,'FileType','text'); % [nSteps x ?]
-            end
-
-            if ~isempty(Di)
-                axialDefo = Di(:,1); % mm
+    % --- Compression block first (if present) ---
+    if Nc > 0
+        idx = idx + 1;
+        crow.label = 'Compression block (CWC–CWS–BFC)';
+        crow.segment = struct('delta',[]);
+        for i = 1:Nc
+            f = fullfile(res, sprintf('crow_%02d_defo.txt', i));
+            if isfile(f)
+                D = readmatrix(f,'FileType','text');   % zeroLength deformation: col1 = ΔUx
+                if ~isempty(D)
+                    crow.segment(i).delta = abs(D(:,1));  % plot compression as positive
+                else
+                    crow.segment(i).delta = [];
+                end
             else
-                axialDefo = [];
+                crow.segment(i).delta = [];
             end
-
-            % Keep sign for tension rows (positive extension in tension)
-            springCurves(r+1).segment(j).delta = axialDefo;
         end
+        springCurves(idx) = crow;
     end
 
-    % --------------------------------------------------
-    % Global moment history (Mhist)
-    % --------------------------------------------------
-    % We use beam900_force_local.txt recorded in write_springs.m:
-    % recorder Element -file results/beam900_force_local.txt -ele 900 localForce
-    %
-    % For a 2D elasticBeamColumn, localForce reports:
-    % [Ni Vi Mi Nj Vj Mj]
-    %
-    % Node 40 is the j-end. Take Vj (col 5) as tip shear.
-    % Then M = Vj * Lb.
-    %
-    % Units:
-    %   Vj in N
-    %   Lb in mm
-    %   Mhist in Nmm
-    beamForceFile = fullfile(resultsDir,'beam900_force_local.txt');
-    Mhist = [];
-    if isfile(beamForceFile)
-        bf = readmatrix(beamForceFile,'FileType','text'); % [nSteps x 6]
-        if ~isempty(bf)
-            Vj_hist = bf(:,5);        % N
-            Lb      = modelData.Lb;   % mm
-            Mhist   = Vj_hist .* Lb;  % Nmm
+    % --- Tension rows: one entry per row, segments along chain ---
+    for r = 1:nrows
+        idx = idx + 1;
+        row.label = sprintf('Row %d (tension chain)', r);
+        C = numel(modelData.Kt{r});
+        row.segment = struct('delta',[]);
+        for j = 1:C
+            f = fullfile(res, sprintf('trow_%02d_%02d_defo.txt', r, j));
+            if isfile(f)
+                D = readmatrix(f,'FileType','text');
+                if ~isempty(D)
+                    row.segment(j).delta = D(:,1);  % ΔUx (mm)
+                else
+                    row.segment(j).delta = [];
+                end
+            else
+                row.segment(j).delta = [];
+            end
         end
+        springCurves(idx) = row;
     end
 end
