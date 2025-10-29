@@ -1,0 +1,103 @@
+function [springCurves, Mhist] = read_local_springs(workDir, modelData)
+% read_local_springs
+% Reads per-spring deformation histories and the global moment history.
+%
+% OUTPUT:
+%   springCurves(r).label
+%   springCurves(r).segment(j).delta   [nSteps x 1] axial deformation history (mm)
+%
+%   springCurves(1)  -> compression row (bottom block)
+%   springCurves(2+) -> tension rows
+%
+%   Mhist [nSteps x 1] global joint moment history in Nmm
+%         computed as tip shear * span
+%
+% NOTE:
+%   Compression row springs shorten. We flip the sign so compression
+%   shows as positive closure in the plots.
+
+    resultsDir = fullfile(workDir, modelData.resultsDirName);
+
+    springCurves = struct;
+
+    % --------------------------------------------------
+    % Compression / shear chain (index 1)
+    % --------------------------------------------------
+    mc = numel(modelData.Kc);
+    springCurves(1).label = 'compression_row';
+    for i = 1:mc
+        dfile = fullfile(resultsDir, sprintf('crow_%02d_defo.txt',  i));
+
+        Di = [];
+        if isfile(dfile)
+            Di = readmatrix(dfile,'FileType','text'); % [nSteps x ?]
+        end
+
+        % zeroLength deformation recorder returns [ux uy rz ...]
+        % take axial deformation along DOF1 = column 1
+        if ~isempty(Di)
+            axialDefo = Di(:,1); % mm
+        else
+            axialDefo = [];
+        end
+
+        % Flip sign for compression chain so "closing" appears positive
+        axialDefo_plot = -axialDefo;
+
+        springCurves(1).segment(i).delta = axialDefo_plot;
+    end
+
+    % --------------------------------------------------
+    % Tension rows (index 2..end)
+    % --------------------------------------------------
+    nrows = numel(modelData.Kt);
+    for r = 1:nrows
+        springCurves(r+1).label = sprintf('tension_row_%d', r);
+
+        C = numel(modelData.Kt{r});
+        for j = 1:C
+            dfile = fullfile(resultsDir, sprintf('trow_%02d_%02d_defo.txt',  r, j));
+
+            Di = [];
+            if isfile(dfile)
+                Di = readmatrix(dfile,'FileType','text'); % [nSteps x ?]
+            end
+
+            if ~isempty(Di)
+                axialDefo = Di(:,1); % mm
+            else
+                axialDefo = [];
+            end
+
+            % Keep sign as-is for tension rows (positive extension)
+            springCurves(r+1).segment(j).delta = axialDefo;
+        end
+    end
+
+    % --------------------------------------------------
+    % Global moment history (Mhist)
+    % --------------------------------------------------
+    % Uses element 900 local forces recorder:
+    %   recorder Element -file results/beam900_force_local.txt -ele 900 localForce
+    %
+    % localForce output format for 2D elasticBeamColumn is:
+    % [Ni Vi Mi Nj Vj Mj]
+    %
+    % Node 40 is the tip (j-end). Take Vj = column 5.
+    % Then M = Vj * Lb.
+    %
+    % Units:
+    %   Vj in N
+    %   Lb in mm
+    %   Mhist in Nmm
+    beamForceFile = fullfile(resultsDir,'beam900_force_local.txt');
+    Mhist = [];
+    if isfile(beamForceFile)
+        bf = readmatrix(beamForceFile,'FileType','text'); % [nSteps x 6]
+        if ~isempty(bf)
+            Vj_hist = bf(:,5);        % N
+            Lb      = modelData.Lb;   % mm
+            Mhist   = Vj_hist .* Lb;  % Nmm
+        end
+    end
+end
