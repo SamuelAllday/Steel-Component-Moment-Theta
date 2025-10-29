@@ -3,3 +3,4 @@ case_*/
 *.out
 *.txt
 *.mat
+.DS_Store
